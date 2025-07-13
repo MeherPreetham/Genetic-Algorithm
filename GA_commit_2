@@ -1,36 +1,43 @@
+# Cell 1.
 !pip install deap
-import random
-import math
-import time
+import random, time, math, copy
+import matplotlib.pyplot as plt
+from statistics import mean, pstdev
 from deap import base, creator, tools
 
-print("===========GA PARAMETERS===========")
-NUM_TASKS = int(input("Enter the number of tasks: "))
-NUM_CORES = int(input("Enter the number of cores: "))
-NUM_POPULATION = int(input("Enter the number of population: "))
-NUM_GENERATIONS = int(input("Enter the number of generations: "))
-CROSSOVER_RATE = float(input("Enter the crossover rate: "))
-MUTATION_RATE = float(input("Enter the mutation rate: "))
-BASE_ENERGY = float(input("Enter the base energy consumption of the cores (J/ms): "))
-STAGNATION_LIMIT = int(input("Enter max generations without improvement: "))
+# Cell 2.
+#@title GA Parameters
+NUM_TASKS        = 1000      # @param {type:"integer"}
+NUM_CORES        = 16        # @param {type:"integer"}
+NUM_POPULATION   = 200       # @param {type:"integer"}
+NUM_GENERATIONS  = 500       # @param {type:"integer"}
+CROSSOVER_RATE   = 0.8       # @param {type:"number"}
+MUTATION_RATE    = 0.2       # @param {type:"number"}
+BASE_ENERGY      = 0.01      # @param {type:"number"}
+STAGNATION_LIMIT = 50        # @param {type:"number"}
+SEED             = 42        # @param {type:"integer"}
+random.seed(SEED)
+execution_times  = [random.randint(1,10) for _ in range(NUM_TASKS)]
 
-execution_times = [random.randint(1, 10) for _ in range(NUM_TASKS)]
+# Cell 3.
 
 # 1 Generating individuals in a population.
-
-def gene(NUM_TASKS, NUM_CORES):
+try:
   creator.create("FitnessMax", base.Fitness, weights=(1.0,))
   creator.create("Individual", list, fitness = creator.FitnessMax)
+except RuntimeError:
+  pass
 
+def gene(NUM_TASKS, NUM_CORES, NUM_POPULATION):
   toolbox = base.Toolbox()
-
   toolbox.register("attr_core", random.randint, 0, NUM_CORES-1)
   toolbox.register("individual", tools.initRepeat, creator.Individual, toolbox.attr_core, n = NUM_TASKS)
-  toolbox.register("population", tools.initRepeat, list, toolbox.individual)
+  toolbox.register("population", tools.initRepeat, list, toolbox.individual, n = NUM_POPULATION)
 
   return toolbox
 
-toolbox = gene(NUM_TASKS, NUM_CORES)
+toolbox = gene(NUM_TASKS, NUM_CORES, NUM_POPULATION)
+population = toolbox.population()
 chromosome = toolbox.individual()
 
 print("==============GENERATING AN INDIVIDUAL==============")
@@ -41,81 +48,104 @@ for i, core in enumerate(chromosome[:min(10, NUM_TASKS)]):
   print(f"Task {i} → Core {core} | Execution Time: {execution_times[i]} ms")
 print("====================================================")
 
-# 2 Fitness.
+# Cell 4.
+TOTAL_EXEC    = sum(execution_times)
+MEAN_LOAD     = TOTAL_EXEC / NUM_CORES if NUM_CORES > 0 else 1e-9
+MAX_MAKESPAN  = TOTAL_EXEC
+MAX_ENERGY    = TOTAL_EXEC * BASE_ENERGY
+
+# weights.
+W_MAKESPAN = 0.4
+W_ENERGY = 0.2
+W_IMBALANCE = 0.4
+
 def evaluate(chromosome):
+    # 1) Per-core total time & energy.
+    core_times  = [0.0]*NUM_CORES
+    core_energy = [0.0]*NUM_CORES
 
-  # 2.1 To find the makespan; maximum time taken by a core to finish execution.
-  core_times = [0] * NUM_CORES
-  for t, c in enumerate(chromosome):
-      core_times[c] += execution_times[t]
-  makespan = max(core_times) #should be minimised.
+    for t_idx, core in enumerate(chromosome):
+        t = execution_times[t_idx]
+        core_times[core]  += t
+        core_energy[core] += t * BASE_ENERGY
 
-  # 2.2 Logging and saving energy consumed by cores in total and per core.
-  power_cost = [0.0] * NUM_CORES #energy consumed by cores separately.
-  for t, c in enumerate(chromosome):
-      power_cost[c] += execution_times[t] * BASE_ENERGY
-  net_power_cost = sum(power_cost) #total energy consumed by all cores.
+    makespan = max(core_times) # worst-loaded core time.
+    total_energy = sum(core_energy)
 
-  # 2.3 Calculating imbalance; task distribution across all the cores.
-  avg_load = sum(core_times) / NUM_CORES
-  #measures how off the load is from the average on all the cores separately.
-  imbalance = sum((time - avg_load) ** 2 for time in core_times) / NUM_CORES
+    # 2 Imbalance via coefficient of variation.
+    # stdev across core_times divided by mean load.
+    if TOTAL_EXEC > 0:
+        load_std = pstdev(core_times)
+        imbalance = load_std / MEAN_LOAD
+    else:
+        imbalance = 0.0
 
-  MAX_EXEC_TIME = max(execution_times)
-  MAX_TOTAL = NUM_TASKS * MAX_EXEC_TIME
-  MAX_IMBALANCE = (MAX_TOTAL ** 2) / NUM_CORES
+    # 3 Normalized objectives
+    nm = min(makespan / MAX_MAKESPAN, 1.0)
+    ne = min(total_energy / MAX_ENERGY, 1.0)
+    ni = min(imbalance, 1.0)
 
+    # 4 Combined fitness (we want to MAXIMIZE this).
+    score = 100 * (1.0 - (W_MAKESPAN*nm + W_ENERGY*ne + W_IMBALANCE*ni))
 
-  # 2.4 Normalising the metrics between [0, 1].
-  norm_makespan = (makespan - min(core_times)) / (max(core_times) - min(core_times))
-  norm_energy = (net_power_cost - min(power_cost)) / (max(power_cost) - min(power_cost) + 1e-9)
-  norm_imbalance = imbalance / MAX_IMBALANCE
+    # 5 Diagnostics on the individual.
+    chromosome.core_times     = core_times
+    chromosome.total_energy   = total_energy
+    chromosome.makespan       = makespan
+    chromosome.imbalance      = imbalance
+    chromosome.fitness_value  = score
 
-  # 2.5 The final weighted fitness score of all the constraints considered.
-  w1 = 0.5  # weight for makespan.
-  w2 = 0.3  # weight for energy.
-  w3 = 0.2  # weight for imbalance.
+    return (score,)
 
-  fitness_cost = (w1 * norm_makespan) + (w2 * norm_energy) + (w3 * norm_imbalance)
-  score = 100 - fitness_cost
-  
-  chromosome.core_times     = core_times
-  chromosome.power_cost     = power_cost
-  chromosome.makespan       = makespan
-  chromosome.imbalance      = imbalance
-  chromosome.net_power_cost = net_power_cost
-  chromosome.fitness_value  = score
-
-  return (score,)
-
+# Registering it.
 toolbox.register("evaluate", evaluate)
 
+
+# Cell 5.
 # 3 Genetic Operators (crossover, mutation, and selection).
 
 toolbox.register("mate", tools.cxUniform, indpb=0.5)
 toolbox.register("mutate", tools.mutUniformInt, low=0, up=NUM_CORES-1, indpb=0.1)
 toolbox.register("select", tools.selTournament, tournsize=3)
+toolbox.register("clone", copy.deepcopy)
 
-population = toolbox.population(n=NUM_POPULATION)
+population = toolbox.population(n = NUM_POPULATION)
+for ind in population:
+  ind.fitness.values = toolbox.evaluate(ind)
 
-for chromosomes in population:
-  chromosome.fitness.values = toolbox.evaluate(chromosome)
+hall = tools.HallOfFame(1)
+best_per_gen = []
+avg_per_gen = []
+std_per_gen   = []
+stagnation    = 0
+best_so_far   = max(ind.fitness.values[0] for ind in population)
 
 start_time = time.time()
 
 LOG_INTERVAL = 10 # Printing the best generations every 10 generations.
 for gen in range(1, NUM_GENERATIONS + 1):
+  hall.update(population)
+  current_best = hall[0].fitness.values[0]
+  if current_best > best_so_far:
+    best_so_far = current_best
+    stagnation = 0
+  else:
+    stagnation += 1
+
+  # Early stop if no improvement.
+  if stagnation >= STAGNATION_LIMIT:
+    print(f"Early stopping at generation {gen}.")
+    break
+
   # 3.1 select & clone.
-  offspring = toolbox.select(population, len(population))
-  offspring = list(map(toolbox.clone, offspring))
+  offspring = list(map(toolbox.clone, toolbox.select(population, len(population))))
 
   # 3.2 Crossover.
   for child1, child2 in zip(offspring[::2], offspring[1::2]):
     if random.random() < CROSSOVER_RATE:
       toolbox.mate(child1, child2)
-      del child1.fitness.values
-      del child2.fitness.values
-    
+      del child1.fitness.values, child2.fitness.values
+
   # 3.3 Mutation.
   for mutant in offspring:
     if random.random() < MUTATION_RATE:
@@ -127,23 +157,40 @@ for gen in range(1, NUM_GENERATIONS + 1):
   for ch in invalids:
     ch.fitness.values = toolbox.evaluate(ch)
 
+  # Elitism
+  offspring[0] = hall[0]
+
   # 3.5 replacing old population.
   population[:] = offspring
 
-  
+  fits = [ind.fitness.values[0] for ind in population]
+  best_per_gen.append(max(fits))
+  avg_per_gen.append(mean(fits))
+  std_per_gen.append(pstdev(fits))
 
   # 3.6 Logging.
   if gen % LOG_INTERVAL == 0 or gen == NUM_GENERATIONS:
-    best = tools.selBest(population, k=1)[0]
-    print(f"Gen {gen:4d} → Best Fitness = {best.fitness.values[0]:.3f}%")
+     print(f"Gen {gen:4d} → Best={best_per_gen[-1]:.3f} | "
+              f"Avg={avg_per_gen[-1]:.3f} | Std={std_per_gen[-1]:.3f}")
 
-end_time = time.time()
-elapsed = end_time - start_time
+elapsed = time.time() - start_time
 
 # 3.7 Final best solution.
-best = tools.selBest(population, 1)[0]
+best = hall[0]
 print("\n=== FINAL BEST SOLUTION ===")
-print(f"GA run time: {elapsed:.2f} seconds")
+print(f"Total time       : {elapsed:.2f}s")
+print(f"Best fitness     : {best.fitness.values[0]:.3f}")
+print(f"Chromosome[:10]  : {best[:10]} …")
+print(f"Makespan         : {best.makespan:.2f} ms")
+print(f"Total energy (J) : {best.total_energy:.3f}")
+print(f"Imbalance        : {best.imbalance:.3f}")
+
+plt.plot(best_per_gen, label="Best")
+plt.plot(avg_per_gen,  label="Average")
+plt.xlabel("Generation"); plt.ylabel("Fitness")
+plt.legend()
+plt.show()
+plt.tight_layout()
 print("Chromosome:", best)
 print(f"Fitness   : {best.fitness.values[0]:.3f}%")
 print(f"Makespan     : {best.makespan} ms")
