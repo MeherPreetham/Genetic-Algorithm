@@ -1,2 +1,0 @@
-deap
-matplotlib>=3.5.0
