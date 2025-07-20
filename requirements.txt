@@ -1,3 +1,4 @@
 deap
+prometheus_client
 matplotlib>=3.5.0
 prometheus_client

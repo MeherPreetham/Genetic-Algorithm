@@ -20,6 +20,7 @@ spec:
       containers:
       - name: ga
         image: iron5pi3dr11/ga-monolithic:latest
+        imagePullPolicy: Always
         envFrom:
         - configMapRef:
             name: ga-monolithic-config

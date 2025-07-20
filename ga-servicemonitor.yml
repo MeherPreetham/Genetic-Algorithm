@@ -1,0 +1,18 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: ga-monolithic
+  namespace: monitoring            # where your Prometheus Operator lives
+  labels:
+    release: monitoring            # must match your Helm release name
+spec:
+  namespaceSelector:
+    matchNames:
+      - default                    # namespace of the Service
+  selector:
+    matchLabels:
+      app: ga-monolithic           # matches the Service’s label
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 15s
