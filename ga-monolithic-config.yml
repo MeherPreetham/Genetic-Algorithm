@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ga-monolithic-config
+data:
+  NUM_TASKS:        "1000"
+  NUM_CORES:        "16"
+  NUM_POPULATION:   "200"
+  NUM_GENERATIONS:  "500"
+  CROSSOVER_RATE:   "0.8"
+  MUTATION_RATE:    "0.2"
+  BASE_ENERGY:      "0.01"
+  IDLE_ENERGY:      "0.002"
+  STAGNATION_LIMIT: "50"
+  SEED:             "42"

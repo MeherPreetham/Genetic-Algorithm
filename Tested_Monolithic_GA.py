@@ -4,6 +4,7 @@ from statistics import mean, pstdev
 import matplotlib.pyplot as plt
 from deap import base, creator, tools
 import argparse
+from prometheus_client import start_http_server, Gauge, Counter, Histogram
 
 def parse_args():
     p = argparse.ArgumentParser()
@@ -118,13 +119,18 @@ def main(args, toolbox):
 
   LOG_INTERVAL = 10 # Printing the best generations every 10 generations.
   for gen in range(1, args.num_generations + 1):
-    hall.update(population)
-    current_best = hall[0].fitness.values[0]
-    if current_best < best_so_far:
-      best_so_far = current_best
-      stagnation = 0
-    else:
-      stagnation += 1
+    with gen_duration.time():
+      hall.update(population)
+      gen_counter.inc()
+      current_best = hall[0].fitness.values[0]
+      best_fitness.set(current_best)
+      mean_fitness.set(mean(ind.fitness.values[0] for ind in population))
+
+      if current_best < best_so_far:
+        best_so_far = current_best
+        stagnation = 0
+      else:
+        stagnation += 1
 
     # Early stop if no improvement.
     if stagnation >= args.stagnation_limit:
@@ -190,6 +196,27 @@ if __name__ == "__main__":
   args = parse_args()
   random.seed(args.seed)
   execution_times = [random.randint(1, 10) for _ in range(args.num_tasks)]
+  
+  best_fitness = Gauge(
+    'ga_best_fitness', 
+    'Mean fitness score of the population at a given generation.'
+    )
+  mean_fitness = Gauge(
+    'ga_mean_fitness',
+    'Mean fitness scorer of the population at a given generation.'
+  )
+  gen_counter = Counter(
+    'ga_generation_total', 
+    'total number of generations processed.'
+  )
+  gen_duration = Gauge(
+    'ga_generation_duration_seconds', 
+    'Duration of each generation in seconds.'
+  )
+
+  start_http_server(8000)
+
+  
   setup_deap()
   toolbox = make_toolbox(args, execution_times)
   main(args, toolbox)

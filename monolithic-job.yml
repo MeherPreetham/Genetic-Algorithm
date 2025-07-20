@@ -1,0 +1,32 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ga-monolithic
+  annotations: 
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8000"
+    prometheus.io/path: "/metrics"
+spec:
+  template:
+    spec:
+      nodeSelector:
+        workload: ga
+      tolerations:
+      - key: "ga"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+      restartPolicy: Never
+      containers:
+      - name: ga
+        image: iron5pi3dr11/ga-monolithic:latest
+        envFrom:
+        - configMapRef:
+            name: ga-monolithic-config
+        resources:
+          requests:
+            cpu:    "500m"
+            memory: "1Gi"
+          limits:
+            cpu:    "1"
+            memory: "2Gi"
